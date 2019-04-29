@@ -14,16 +14,27 @@ DLATFIELD2   := -DFFT3D -DHDF5
 # optional compiler settings (LATfield2)
 #DLATFIELD2   += -DH5_HAVE_PARALLEL
 #DLATFIELD2   += -DEXTERNAL_IO
+#DLATFIELD2   += -DSINGLE     # switches to single precision, use LIB -lfftw3f
 
 # optional compiler settings (gevolution)
 DGEVOLUTION  := -DPHINONLINEAR
 DGEVOLUTION  += -DBENCHMARK
+DGEVOLUTION  += -DEXACT_OUTPUT_REDSHIFTS
+#DGEVOLUTION  += -DVELOCITY      # enables velocity field utilities
+#DGEVOLUTION  += -DCOLORTERMINAL
 #DGEVOLUTION  += -DCHECK_B
-#DGEVOLUTION  += -DHAVE_CLASS # requires OPT -fopenmp and LIB -lclass
+#DGEVOLUTION  += -DHAVE_CLASS    # requires LIB -lclass
+#DGEVOLUTION  += -DHAVE_HEALPIX  # requires LIB -lchealpix
 
 # further compiler options
 OPT          := -O3 -std=c++11
 
 $(EXEC): $(SOURCE) $(HEADERS) makefile
 	$(COMPILER) $< -o $@ $(OPT) $(DLATFIELD2) $(DGEVOLUTION) $(INCLUDE) $(LIB)
+	
+lccat: lccat.cpp
+	$(COMPILER) $< -o $@ $(OPT) $(DGEVOLUTION) $(INCLUDE)
+
+clean:
+	-rm -f $(EXEC) lccat
 

@@ -4,9 +4,9 @@
 // 
 // basic initial condition generator for gevolution
 //
-// Author: Julian Adamek (Université de Genève & Observatoire de Paris)
+// Author: Julian Adamek (Université de Genève & Observatoire de Paris & Queen Mary University of London)
 //
-// Last modified: December 2016
+// Last modified: April 2019
 //
 //////////////////////////
 
@@ -15,6 +15,7 @@
 
 #include "prng_engine.hpp"
 #include <gsl/gsl_spline.h>
+#include "parser.hpp"
 #include "tools.hpp"
 
 #ifndef Cplx
@@ -1628,12 +1629,14 @@ double applyMomentumDistribution(Particles<part_simple,part_simple_info,part_sim
 //   plan_Bi        pointer to FFT planner
 //   plan_source    pointer to FFT planner
 //   plan_Sij       pointer to FFT planner
+//   params         pointer to array of precision settings for CLASS (can be NULL)
+//   numparam       number of precision settings for CLASS (can be 0)
 //
 // Returns:
 // 
 //////////////////////////
 
-void generateIC_basic(metadata & sim, icsettings & ic, cosmology & cosmo, const double fourpiG, Particles<part_simple,part_simple_info,part_simple_dataType> * pcls_cdm, Particles<part_simple,part_simple_info,part_simple_dataType> * pcls_b, Particles<part_simple,part_simple_info,part_simple_dataType> * pcls_ncdm, double * maxvel, Field<Real> * phi, Field<Real> * chi, Field<Real> * Bi, Field<Real> * source, Field<Real> * Sij, Field<Cplx> * scalarFT, Field<Cplx> * BiFT, Field<Cplx> * SijFT, PlanFFT<Cplx> * plan_phi, PlanFFT<Cplx> * plan_chi, PlanFFT<Cplx> * plan_Bi, PlanFFT<Cplx> * plan_source, PlanFFT<Cplx> * plan_Sij)
+void generateIC_basic(metadata & sim, icsettings & ic, cosmology & cosmo, const double fourpiG, Particles<part_simple,part_simple_info,part_simple_dataType> * pcls_cdm, Particles<part_simple,part_simple_info,part_simple_dataType> * pcls_b, Particles<part_simple,part_simple_info,part_simple_dataType> * pcls_ncdm, double * maxvel, Field<Real> * phi, Field<Real> * chi, Field<Real> * Bi, Field<Real> * source, Field<Real> * Sij, Field<Cplx> * scalarFT, Field<Cplx> * BiFT, Field<Cplx> * SijFT, PlanFFT<Cplx> * plan_phi, PlanFFT<Cplx> * plan_chi, PlanFFT<Cplx> * plan_Bi, PlanFFT<Cplx> * plan_source, PlanFFT<Cplx> * plan_Sij, parameter * params, int & numparam)
 {
 	int i, j, p;
 	double a = 1. / (1. + sim.z_in);
@@ -1715,7 +1718,7 @@ void generateIC_basic(metadata & sim, icsettings & ic, cosmology & cosmo, const 
 #ifdef HAVE_CLASS
 		if (ic.tkfile[0] == '\0')
 		{
-			initializeCLASSstructures(sim, ic, cosmo, class_background, class_perturbs, class_spectra);
+			initializeCLASSstructures(sim, ic, cosmo, class_background, class_perturbs, class_spectra, params, numparam);
 			loadTransferFunctions(class_background, class_perturbs, class_spectra, tk_d1, tk_t1, "tot", sim.boxsize, sim.z_in, cosmo.h);
 		}
 		else
@@ -2001,7 +2004,7 @@ void generateIC_basic(metadata & sim, icsettings & ic, cosmology & cosmo, const 
 	
 	initializeParticlePositions(sim.numpcl[0], pcldata, ic.numtile[0], *pcls_cdm);
 	i = MAX;
-	if (sim.baryon_flag == 3)	// bayyon treatment = hybrid; displace particles using both displacement fields
+	if (sim.baryon_flag == 3)	// baryon treatment = hybrid; displace particles using both displacement fields
 		pcls_cdm->moveParticles(displace_pcls_ic_basic, 1., ic_fields, 2, NULL, &max_displacement, &i, 1);
 	else
 		pcls_cdm->moveParticles(displace_pcls_ic_basic, 1., &chi, 1, NULL, &max_displacement, &i, 1);	// displace CDM particles
@@ -2083,6 +2086,8 @@ void generateIC_basic(metadata & sim, icsettings & ic, cosmology & cosmo, const 
 	
 	for (p = 0; p < cosmo.num_ncdm; p++)	// initialization of non-CDM species
 	{
+		if (ic.numtile[1+sim.baryon_flag+p] < 1) continue;
+
 		loadHomogeneousTemplate(ic.pclfile[1+sim.baryon_flag+p], sim.numpcl[1+sim.baryon_flag+p], pcldata);
 	
 		if (pcldata == NULL)
@@ -2187,7 +2192,10 @@ void generateIC_basic(metadata & sim, icsettings & ic, cosmology & cosmo, const 
 		if (sim.baryon_flag)
 			scalarProjectionCIC_project(pcls_b, source);
 		for (p = 0; p < cosmo.num_ncdm; p++)
+		{
+			if (ic.numtile[1+sim.baryon_flag+p] < 1) continue;
 			scalarProjectionCIC_project(pcls_ncdm+p, source);
+		}
 		scalarProjectionCIC_comm(source);
 	
 		plan_source->execute(FFT_FORWARD);
@@ -2212,9 +2220,15 @@ void generateIC_basic(metadata & sim, icsettings & ic, cosmology & cosmo, const 
 			
 	for (p = 0; p < cosmo.num_ncdm; p++)
 	{
+		if (ic.numtile[1+sim.baryon_flag+p] < 1)
+		{
+			maxvel[1+sim.baryon_flag+p] = 0;
+			continue;
+		}
+
 		if (ic.pkfile[0] != '\0') // if power spectrum is used instead of transfer functions, set bulk velocities using linear approximation
 		{		
-			rescale = a / Hconf(a, fourpiG, cosmo) / (1.5 * Omega_m(a, cosmo) + 2. * Omega_rad(a, cosmo));
+			rescale = a / Hconf(a, fourpiG, cosmo) / (1.5 * Omega_m(a, cosmo) + Omega_rad(a, cosmo));
 			pcls_ncdm[p].updateVel(initialize_q_ic_basic, rescale, &phi, 1);
 		}
 		
@@ -2260,4 +2274,3 @@ void generateIC_basic(metadata & sim, icsettings & ic, cosmology & cosmo, const 
 #endif
 
 #endif
-
